@@ -47,8 +47,22 @@ from app.text_utils import (
 bot = telebot.TeleBot(config.token, threaded=True)
 
 from app.access import AllowList, parse_user_id
+from app.notify import DenyNotifier, format_access_request
 acl = AllowList(config.allowlist_path, config.admin_id)
 acl.load()
+deny_notifier = DenyNotifier()
+
+
+def _notify_admin_denied(message) -> None:
+    """Ping the admin once about a denied user's access attempt (deduped)."""
+    u = message.from_user
+    if not deny_notifier.should_notify(u.id):
+        return
+    _bot_call(
+        bot.send_message,
+        config.admin_id,
+        format_access_request(u.id, u.username, u.first_name),
+    )
 
 # Edit throttling (avoid Telegram flood limits)
 EDIT_INTERVAL_SEC = 1.8
@@ -548,6 +562,7 @@ def log(message, text: str, media: str):
 @bot.message_handler(commands=["start", "help"])
 def start_help(message):
     if not acl.is_allowed(message.from_user.id):
+        _notify_admin_denied(message)
         return
     mode = config.default_mode
     if mode == "video":
@@ -780,6 +795,7 @@ def _send_choice_ui(message, url: str) -> None:
 @bot.message_handler(func=lambda m: handle_as_free_message(m.text), content_types=["text", "photo", "video", "document", "audio", "voice"])
 def handle_private_messages(message):
     if not acl.is_allowed(message.from_user.id):
+        _notify_admin_denied(message)
         return
     if message.chat.type != "private":
         return
@@ -953,6 +969,7 @@ def get_text(message):
 @bot.message_handler(commands=["custom"])
 def custom(message):
     if not acl.is_allowed(message.from_user.id):
+        _notify_admin_denied(message)
         return
     text = get_text(message)
     if not text:
