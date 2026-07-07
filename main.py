@@ -4,6 +4,7 @@ import telebot
 import config
 import yt_dlp
 import os
+import subprocess
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from telebot import types
 from telebot.util import quick_markup
@@ -12,6 +13,21 @@ import threading
 import queue
 import uuid
 from typing import Optional, Dict, Any, Tuple, List
+
+def _probe_video_dimensions(file_path: str) -> Dict[str, Any]:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height:format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.split()
+        if len(out) >= 3:
+            return {"width": int(out[0]), "height": int(out[1]), "duration": int(float(out[2]))}
+    except Exception:
+        pass
+    return {}
+
 
 from app.http_utils import requests_session_with_retries as _requests_session_with_retries
 from app.download_utils import (
@@ -460,6 +476,7 @@ def _download_and_send(job: Dict[str, Any]) -> None:
         else:
             ext = os.path.splitext(file_path)[1] or ".mp4"
             send_filename = f"{base}{ext}"
+            dims = _probe_video_dimensions(file_path)
             _send_via_bot_api_with_progress(
                 job_id=job_id,
                 chat_id=chat_id,
@@ -471,7 +488,7 @@ def _download_and_send(job: Dict[str, Any]) -> None:
                 file_path=file_path,
                 send_filename=send_filename,
                 stage_label="Sending video...",
-                extra_params={"supports_streaming": "true"},
+                extra_params={"supports_streaming": "true", **dims},
             )
 
         # Success: delete status message (only media remains)
