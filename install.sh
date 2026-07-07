@@ -128,6 +128,8 @@ write_env_and_config() {
 BOT_TOKEN=$token
 OUTPUT_FOLDER=/tmp/yt-dlp-telegram
 DEFAULT_MODE=ask
+ADMIN_ID=0
+ALLOWLIST_PATH=/data/allowlist.json
 YTDLP_AUTO_UPDATE=1
 YTDLP_JS_RUNTIMES=node
 YTDLP_REMOTE_COMPONENTS=ejs:github
@@ -159,6 +161,10 @@ output_folder = (os.getenv("OUTPUT_FOLDER") or "/tmp/yt-dlp-telegram").strip() o
 default_mode = (os.getenv("DEFAULT_MODE") or "ask").strip().lower()
 if default_mode not in ("ask", "video", "doc"):
     default_mode = "ask"
+
+# Access control
+admin_id = int(os.getenv("ADMIN_ID") or 0)
+allowlist_path = (os.getenv("ALLOWLIST_PATH") or "/data/allowlist.json").strip()
 PY
 
   # Make sure token file isn't accidentally committed (best effort)
@@ -521,6 +527,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    volumes:
+      - ./data:/data
 YML
 
   ok "Docker files created."

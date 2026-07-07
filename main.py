@@ -60,6 +60,10 @@ from app.text_utils import (
 # =========================
 bot = telebot.TeleBot(config.token, threaded=True)
 
+from app.access import AllowList, parse_user_id
+acl = AllowList(config.allowlist_path, config.admin_id)
+acl.load()
+
 # Edit throttling (avoid Telegram flood limits)
 EDIT_INTERVAL_SEC = 1.8
 
@@ -557,6 +561,8 @@ def log(message, text: str, media: str):
 # =========================
 @bot.message_handler(commands=["start", "help"])
 def start_help(message):
+    if not acl.is_allowed(message.from_user.id):
+        return
     bot.reply_to(
         message,
         "*Send me a video link* and I'll download it for you.\n\n"
@@ -768,6 +774,8 @@ def _send_choice_ui(message, url: str) -> None:
 
 @bot.message_handler(func=lambda m: True, content_types=["text", "photo", "video", "document", "audio", "voice"])
 def handle_private_messages(message):
+    if not acl.is_allowed(message.from_user.id):
+        return
     if message.chat.type != "private":
         return
 
@@ -801,6 +809,8 @@ def handle_private_messages(message):
 # =========================
 @bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("cnl|")))
 def on_cancel(call):
+    if not acl.is_allowed(call.from_user.id):
+        return
     try:
         parts = call.data.split("|")
         if len(parts) != 2:
@@ -867,6 +877,8 @@ def _enqueue_job(user_id, chat_id, reply_to_message_id, status_message_id, url, 
 
 @bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("dl|")))
 def on_download_choice(call):
+    if not acl.is_allowed(call.from_user.id):
+        return
     try:
         parts = call.data.split("|")
         if len(parts) != 3:
@@ -935,6 +947,8 @@ def get_text(message):
 
 @bot.message_handler(commands=["custom"])
 def custom(message):
+    if not acl.is_allowed(message.from_user.id):
+        return
     text = get_text(message)
     if not text:
         bot.reply_to(message, "Invalid usage, use `/custom url`", parse_mode="MARKDOWN")
@@ -962,6 +976,8 @@ def custom(message):
 
 @bot.callback_query_handler(func=lambda call: bool(call.data) and not call.data.startswith("dl|") and not call.data.startswith("cnl|"))
 def callback_custom_format(call):
+    if not acl.is_allowed(call.from_user.id):
+        return
     try:
         if not call.message.reply_to_message:
             return
@@ -986,4 +1002,46 @@ def callback_custom_format(call):
 # =========================
 # Run
 # =========================
+
+# =========================
+# Admin: manage access allow-list
+# =========================
+@bot.message_handler(commands=["allow"])
+def cmd_allow(message):
+    if not acl.is_admin(message.from_user.id):
+        return
+    uid = parse_user_id(message.text)
+    if uid is None:
+        bot.reply_to(message, "Usage: /allow <numeric user id>")
+        return
+    added = acl.allow(uid)
+    bot.reply_to(message, f"Added {uid}." if added else f"{uid} already allowed.")
+
+
+@bot.message_handler(commands=["deny"])
+def cmd_deny(message):
+    if not acl.is_admin(message.from_user.id):
+        return
+    uid = parse_user_id(message.text)
+    if uid is None:
+        bot.reply_to(message, "Usage: /deny <numeric user id>")
+        return
+    removed = acl.deny(uid)
+    if removed:
+        bot.reply_to(message, f"Removed {uid}.")
+    elif uid == config.admin_id:
+        bot.reply_to(message, "Cannot remove the admin.")
+    else:
+        bot.reply_to(message, f"{uid} was not in the list.")
+
+
+@bot.message_handler(commands=["users"])
+def cmd_users(message):
+    if not acl.is_admin(message.from_user.id):
+        return
+    ids = acl.users()
+    lines = "\n".join(str(i) + (" (admin)" if i == config.admin_id else "") for i in ids)
+    bot.reply_to(message, "Allowed users:\n" + lines)
+
+
 bot.infinity_polling()
