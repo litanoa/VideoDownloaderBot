@@ -12,7 +12,7 @@ set -euo pipefail
 # - Sets up nightly yt-dlp auto-update timer (server-side)
 # =========================
 
-REPO_URL_DEFAULT="https://github.com/Avazbek22/VideoDownloaderBot.git"
+REPO_URL_DEFAULT="https://github.com/litanoa/VideoDownloaderBot.git"
 BRANCH_DEFAULT="main"
 INSTALL_DIR_DEFAULT="$HOME/VideoDownloaderBot"
 
@@ -127,6 +127,7 @@ write_env_and_config() {
   cat > "$install_dir/.env" <<EOF
 BOT_TOKEN=$token
 OUTPUT_FOLDER=/tmp/yt-dlp-telegram
+DEFAULT_MODE=ask
 YTDLP_AUTO_UPDATE=1
 YTDLP_JS_RUNTIMES=node
 YTDLP_REMOTE_COMPONENTS=ejs:github
@@ -153,6 +154,11 @@ max_filesize = 50 * 1024 * 1024
 
 # Temp folder for downloads (can be overridden)
 output_folder = (os.getenv("OUTPUT_FOLDER") or "/tmp/yt-dlp-telegram").strip() or "/tmp/yt-dlp-telegram"
+
+# Default delivery mode: ask (show buttons) | video | doc
+default_mode = (os.getenv("DEFAULT_MODE") or "ask").strip().lower()
+if default_mode not in ("ask", "video", "doc"):
+    default_mode = "ask"
 PY
 
   # Make sure token file isn't accidentally committed (best effort)

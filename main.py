@@ -560,10 +560,11 @@ def start_help(message):
     bot.reply_to(
         message,
         "*Send me a video link* and I'll download it for you.\n\n"
-        "You can choose:\n"
-        "• *Video*\n"
-        "• *Document* (original file)\n"
-        "• *Audio (MP3)*\n\n"
+        f"Current default delivery: *{config.default_mode}*\n\n"
+        "• *ask* — you pick Video / Document / Audio each time\n"
+        "• *video* — sends the video automatically (Audio button stays)\n"
+        "• *document* — sends the original file automatically (Audio button stays)\n\n"
+        "To change the default, set `DEFAULT_MODE=ask|video|doc` in `.env` on the server and restart.\n\n"
         f"Upload limit: *{_fmt_bytes(MAX_SEND_BYTES)}*\n\n"
         "_Powered by_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)",
         parse_mode="MARKDOWN",
@@ -696,7 +697,40 @@ def _send_choice_ui(message, url: str) -> None:
         _safe_send_message(message.chat.id, msg, reply_to_message_id=message.message_id)
         return
 
-    # If video_ok == True -> show normal 3 buttons (Video/Document/Audio if available)
+    # Auto-mode: when a default delivery mode is set, skip the Video/Document
+    # buttons and enqueue the download immediately.
+    if config.default_mode in ("video", "doc"):
+        status_msg = bot.reply_to(message, "Queued...", disable_web_page_preview=True)
+        _enqueue_job(
+            message.from_user.id, message.chat.id, message.message_id,
+            status_msg.message_id, url, title, config.default_mode, video_plan,
+        )
+        # Audio is a separate download: offer it as an extra button. Its pending
+        # entry carries only audio_plan (video already handled above) and expires
+        # via the normal TTL cleanup if unused.
+        if audio_plan:
+            request_id = uuid.uuid4().hex[:18]
+            pending_requests[request_id] = {
+                "created_at": time.time(),
+                "user_id": message.from_user.id,
+                "chat_id": message.chat.id,
+                "reply_to_message_id": message.message_id,
+                "url": url,
+                "title": title,
+                "video_plan": None,
+                "audio_plan": audio_plan,
+            }
+            kb = types.InlineKeyboardMarkup(row_width=1)
+            kb.add(types.InlineKeyboardButton("Also download as Audio (MP3)", callback_data=f"dl|audio|{request_id}"))
+            _safe_send_message(
+                chat_id=message.chat.id,
+                text=f"{title}\n\nAudio also available: {audio_plan.get('quality_label', 'mp3')}",
+                reply_to_message_id=message.message_id,
+                reply_markup=kb
+            )
+        return
+
+    # video_ok and ask-mode -> show the normal Video / Document / Audio buttons.
     request_id = uuid.uuid4().hex[:18]
     pending_requests[request_id] = {
         "created_at": time.time(),
@@ -800,6 +834,37 @@ def on_cancel(call):
 # =========================
 # Callback: buttons -> enqueue job
 # =========================
+def _enqueue_job(user_id, chat_id, reply_to_message_id, status_message_id, url, title, job_mode, plan):
+    job_id = uuid.uuid4().hex[:18]
+    cancel_events[job_id] = threading.Event()
+    active_jobs[job_id] = {
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "status_message_id": status_message_id,
+    }
+
+    queued_pos = jobs_q.qsize() + 1
+    _safe_edit(
+        chat_id,
+        status_message_id,
+        _render_status(title, "queued", None, None, None, queued_pos=queued_pos),
+        reply_markup=_cancel_markup(job_id),
+        force=True
+    )
+
+    job = {
+        "job_id": job_id,
+        "chat_id": chat_id,
+        "reply_to_message_id": reply_to_message_id,
+        "status_message_id": status_message_id,
+        "url": url,
+        "title": title,
+        "mode": job_mode,
+        "plan": plan,
+    }
+    jobs_q.put(job)
+
+
 @bot.callback_query_handler(func=lambda call: bool(call.data and call.data.startswith("dl|")))
 def on_download_choice(call):
     try:
@@ -849,34 +914,7 @@ def on_download_choice(call):
 
         _safe_answer_callback(call.id, "OK")
 
-        job_id = uuid.uuid4().hex[:18]
-        cancel_events[job_id] = threading.Event()
-        active_jobs[job_id] = {
-            "user_id": req["user_id"],
-            "chat_id": chat_id,
-            "status_message_id": status_message_id,
-        }
-
-        queued_pos = jobs_q.qsize() + 1
-        _safe_edit(
-            chat_id,
-            status_message_id,
-            _render_status(title, "queued", None, None, None, queued_pos=queued_pos),
-            reply_markup=_cancel_markup(job_id),
-            force=True
-        )
-
-        job = {
-            "job_id": job_id,
-            "chat_id": chat_id,
-            "reply_to_message_id": reply_to_message_id,
-            "status_message_id": status_message_id,
-            "url": url,
-            "title": title,
-            "mode": job_mode,
-            "plan": plan,
-        }
-        jobs_q.put(job)
+        _enqueue_job(req["user_id"], chat_id, reply_to_message_id, status_message_id, url, title, job_mode, plan)
 
     except Exception:
         _safe_answer_callback(call.id, "Error")
