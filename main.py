@@ -570,7 +570,10 @@ def start_help(message):
             "• `/deny <id>` — revoke access\n"
             "• `/users` — list allowed users"
         )
-    text += "\n\n_Powered by_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)"
+    text += (
+        "\n\n_Based on_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)"
+        " · _fork by_ [litanoa](https://github.com/litanoa/VideoDownloaderBot)"
+    )
 
     bot.reply_to(
         message,
