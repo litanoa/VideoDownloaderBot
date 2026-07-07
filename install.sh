@@ -119,16 +119,42 @@ clone_or_update_repo() {
   fi
 }
 
+read_existing_env_value() {
+  # read_existing_env_value <env_file> <key>
+  local env_file="$1"
+  local key="$2"
+  [[ -f "$env_file" ]] || return 0
+  grep -m1 "^${key}=" "$env_file" | cut -d= -f2- || true
+}
+
 write_env_and_config() {
   local install_dir="$1"
   local token="$2"
+  local admin_id="$3"
+  local env_file="$install_dir/.env"
+
+  # Preserve existing values on re-install instead of clobbering a good config.
+  local existing_token="" existing_admin_id="" existing_mode=""
+  if [[ -f "$env_file" ]]; then
+    existing_token="$(read_existing_env_value "$env_file" "BOT_TOKEN")"
+    existing_admin_id="$(read_existing_env_value "$env_file" "ADMIN_ID")"
+    existing_mode="$(read_existing_env_value "$env_file" "DEFAULT_MODE")"
+  fi
+  # A tampered/corrupt existing ADMIN_ID must never be re-interpolated as-is
+  # into the unquoted heredoc below.
+  [[ "$existing_admin_id" =~ ^[1-9][0-9]*$ ]] || existing_admin_id=""
+  [[ -z "$token" ]] && token="$existing_token"
+  [[ -z "$admin_id" ]] && admin_id="$existing_admin_id"
+  local default_mode="${existing_mode:-ask}"
 
   # .env is used by docker-compose automatically and can be used by systemd EnvironmentFile
-  cat > "$install_dir/.env" <<EOF
+  # ALLOWLIST_PATH assumes the Docker ./data:/data volume (see write_docker_files);
+  # system-mode (systemd) installs should override it to a real filesystem path.
+  cat > "$env_file" <<EOF
 BOT_TOKEN=$token
 OUTPUT_FOLDER=/tmp/yt-dlp-telegram
-DEFAULT_MODE=ask
-ADMIN_ID=0
+DEFAULT_MODE=$default_mode
+ADMIN_ID=$admin_id
 ALLOWLIST_PATH=/data/allowlist.json
 YTDLP_AUTO_UPDATE=1
 YTDLP_JS_RUNTIMES=node
@@ -163,7 +189,12 @@ if default_mode not in ("ask", "video", "doc"):
     default_mode = "ask"
 
 # Access control
-admin_id = int(os.getenv("ADMIN_ID") or 0)
+try:
+    admin_id = int(os.getenv("ADMIN_ID") or 0)
+except ValueError:
+    raise RuntimeError("ADMIN_ID must be a numeric Telegram user id.")
+if admin_id <= 0:
+    raise RuntimeError("ADMIN_ID is not set. Put your numeric Telegram user id into .env.")
 allowlist_path = (os.getenv("ALLOWLIST_PATH") or "/data/allowlist.json").strip()
 PY
 
@@ -567,6 +598,12 @@ install_system_mode() {
 
   ok "Python venv ready."
 
+  # System-mode installs don't get the Docker ./data volume, so point
+  # ALLOWLIST_PATH at a real path under install_dir instead of the
+  # Docker-only default (/data/allowlist.json).
+  mkdir -p "$install_dir/data"
+  sed -i "s#^ALLOWLIST_PATH=.*#ALLOWLIST_PATH=$install_dir/data/allowlist.json#" "$install_dir/.env"
+
   if has_systemd; then
     say "Creating systemd service: videodownloaderbot"
 
@@ -631,15 +668,28 @@ main() {
   install_base_deps
   clone_or_update_repo "$repo_url" "$branch" "$install_dir"
 
-  # Ask only for token
-  local token=""
+  local existing_token=""
+  local existing_admin_id=""
+  if [[ -f "$install_dir/.env" ]]; then
+    existing_token="$(read_existing_env_value "$install_dir/.env" "BOT_TOKEN")"
+    existing_admin_id="$(read_existing_env_value "$install_dir/.env" "ADMIN_ID")"
+  fi
+
+  local token="$existing_token"
   while [[ -z "$token" ]]; do
     read -r -p "Enter Telegram Bot Token: " token || true
     token="$(echo -n "$token" | tr -d '\r\n' | xargs)"
     [[ -z "$token" ]] && warn "Token can't be empty."
   done
 
-  write_env_and_config "$install_dir" "$token"
+  local admin_id="$existing_admin_id"
+  while ! [[ "$admin_id" =~ ^[1-9][0-9]*$ ]]; do
+    read -r -p "Enter your Telegram numeric user id (ADMIN_ID): " admin_id || true
+    admin_id="$(echo -n "$admin_id" | tr -d '\r\n' | xargs)"
+    [[ "$admin_id" =~ ^[1-9][0-9]*$ ]] || warn "ADMIN_ID must be a positive integer."
+  done
+
+  write_env_and_config "$install_dir" "$token" "$admin_id"
 
   if prompt_yn "Install & run using Docker?" "Y"; then
     ensure_docker_installed || { err "Docker is required for Docker install."; exit 1; }

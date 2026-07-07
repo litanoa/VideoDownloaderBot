@@ -4,7 +4,6 @@ import telebot
 import config
 import yt_dlp
 import os
-import subprocess
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 from telebot import types
 from telebot.util import quick_markup
@@ -14,21 +13,7 @@ import queue
 import uuid
 from typing import Optional, Dict, Any, Tuple, List
 
-def _probe_video_dimensions(file_path: str) -> Dict[str, Any]:
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height:format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            capture_output=True, text=True, timeout=30,
-        ).stdout.split()
-        if len(out) >= 3:
-            return {"width": int(out[0]), "height": int(out[1]), "duration": int(float(out[2]))}
-    except Exception:
-        pass
-    return {}
-
-
+from app.probe import probe_video_dimensions as _probe_video_dimensions
 from app.http_utils import requests_session_with_retries as _requests_session_with_retries
 from app.download_utils import (
     calc_download_progress as _calc_download_progress,
@@ -569,7 +554,7 @@ def start_help(message):
         f"Current default delivery: *{config.default_mode}*\n\n"
         "• *ask* — you pick Video / Document / Audio each time\n"
         "• *video* — sends the video automatically (Audio button stays)\n"
-        "• *document* — sends the original file automatically (Audio button stays)\n\n"
+        "• *doc* — sends the original file automatically (Audio button stays)\n\n"
         "To change the default, set `DEFAULT_MODE=ask|video|doc` in `.env` on the server and restart.\n\n"
         f"Upload limit: *{_fmt_bytes(MAX_SEND_BYTES)}*\n\n"
         "_Powered by_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)",
@@ -1000,12 +985,10 @@ def callback_custom_format(call):
 
 
 # =========================
-# Run
-# =========================
-
-# =========================
 # Admin: manage access allow-list
 # =========================
+# Note: these handlers check is_admin only, not is_allowed — the admin id is
+# always seeded into the allow-list, so is_admin implies is_allowed.
 @bot.message_handler(commands=["allow"])
 def cmd_allow(message):
     if not acl.is_admin(message.from_user.id):
@@ -1044,4 +1027,7 @@ def cmd_users(message):
     bot.reply_to(message, "Allowed users:\n" + lines)
 
 
+# =========================
+# Run
+# =========================
 bot.infinity_polling()

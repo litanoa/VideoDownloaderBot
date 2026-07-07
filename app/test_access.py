@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 
@@ -93,6 +94,25 @@ def test_persisted_file_is_valid_json(tmp_path):
     ("/allow", None),
     ("/allow abc", None),
     ("/allow 222 444", 222),  # takes first token
+    ("/allow -5", None),
 ])
 def test_parse_user_id(text, expected):
     assert parse_user_id(text) == expected
+
+
+def test_concurrent_allow_is_consistent(tmp_path):
+    path = tmp_path / "allowlist.json"
+    acl = AllowList(str(path), admin_id=ADMIN)
+    acl.load()
+
+    n = 20
+    ids = [1000 + i for i in range(n)]
+    threads = [threading.Thread(target=acl.allow, args=(uid,)) for uid in ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(acl.users()) == n + 1  # + admin
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert sorted(data) == acl.users()

@@ -10,9 +10,10 @@ def parse_user_id(text: str) -> Optional[int]:
     if len(parts) < 2:
         return None
     try:
-        return int(parts[1])
+        uid = int(parts[1])
     except ValueError:
         return None
+    return uid if uid > 0 else None
 
 
 class AllowList:
@@ -29,16 +30,22 @@ class AllowList:
         self._lock = threading.Lock()
 
     def load(self) -> None:
-        ids = {self._admin_id}
-        try:
-            with open(self._path, encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                ids.update(int(x) for x in data)
-        except (FileNotFoundError, ValueError, TypeError):
-            pass  # missing or corrupt -> seed with admin only
-        self._ids = ids
-        self._save()
+        with self._lock:
+            ids = {self._admin_id}
+            try:
+                with open(self._path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    ids.update(int(x) for x in data)
+            except (FileNotFoundError, ValueError, TypeError):
+                pass  # missing or corrupt -> seed with admin only
+            self._ids = ids
+            try:
+                self._save()
+            except OSError as e:
+                raise RuntimeError(
+                    f"cannot write allow-list to {self._path}: check permissions/volume"
+                ) from e
 
     def is_admin(self, user_id: int) -> bool:
         return int(user_id) == self._admin_id
