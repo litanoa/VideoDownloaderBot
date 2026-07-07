@@ -14,6 +14,7 @@ import uuid
 from typing import Optional, Dict, Any, Tuple, List
 
 from app.probe import probe_video_dimensions as _probe_video_dimensions
+from app.routing import handle_as_free_message
 from app.http_utils import requests_session_with_retries as _requests_session_with_retries
 from app.download_utils import (
     calc_download_progress as _calc_download_progress,
@@ -548,16 +549,32 @@ def log(message, text: str, media: str):
 def start_help(message):
     if not acl.is_allowed(message.from_user.id):
         return
+    mode = config.default_mode
+    if mode == "video":
+        behaviour = "I'll send the *video* right away. An *Audio (MP3)* button stays below it if you want the sound only."
+    elif mode == "doc":
+        behaviour = "I'll send the *original file* right away. An *Audio (MP3)* button stays below it if you want the sound only."
+    else:
+        behaviour = "You'll get buttons to choose *Video*, *Document* (original file) or *Audio (MP3)*."
+
+    text = (
+        "*Send me a link* (Instagram, YouTube, TikTok, X, Reddit and more) and I'll download it for you.\n\n"
+        f"{behaviour}\n\n"
+        f"Max file size: *{_fmt_bytes(MAX_SEND_BYTES)}*. If a video won't fit, I'll tell you before downloading.\n\n"
+        "This is a private bot — only approved users can use it."
+    )
+    if acl.is_admin(message.from_user.id):
+        text += (
+            "\n\n*Admin commands:*\n"
+            "• `/allow <id>` — grant access to a Telegram user id\n"
+            "• `/deny <id>` — revoke access\n"
+            "• `/users` — list allowed users"
+        )
+    text += "\n\n_Powered by_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)"
+
     bot.reply_to(
         message,
-        "*Send me a video link* and I'll download it for you.\n\n"
-        f"Current default delivery: *{config.default_mode}*\n\n"
-        "• *ask* — you pick Video / Document / Audio each time\n"
-        "• *video* — sends the video automatically (Audio button stays)\n"
-        "• *doc* — sends the original file automatically (Audio button stays)\n\n"
-        "To change the default, set `DEFAULT_MODE=ask|video|doc` in `.env` on the server and restart.\n\n"
-        f"Upload limit: *{_fmt_bytes(MAX_SEND_BYTES)}*\n\n"
-        "_Powered by_ [Avazbek Olimov](https://github.com/Avazbek22/VideoDownloaderBot)",
+        text,
         parse_mode="MARKDOWN",
         disable_web_page_preview=True,
     )
@@ -757,7 +774,7 @@ def _send_choice_ui(message, url: str) -> None:
     )
 
 
-@bot.message_handler(func=lambda m: True, content_types=["text", "photo", "video", "document", "audio", "voice"])
+@bot.message_handler(func=lambda m: handle_as_free_message(m.text), content_types=["text", "photo", "video", "document", "audio", "voice"])
 def handle_private_messages(message):
     if not acl.is_allowed(message.from_user.id):
         return
